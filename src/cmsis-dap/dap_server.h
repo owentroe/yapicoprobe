@@ -36,6 +36,7 @@
 
 
 void dap_server_init(uint32_t task_prio);
+bool dap_is_connected(void);
 
 
 #ifdef __cplusplus

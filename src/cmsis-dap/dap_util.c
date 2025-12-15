@@ -33,6 +33,7 @@
  * BUT... problem still persists, see e.g. DAP_SWD_Sequence()
  */
 
+#include <stdio.h>
 #include <string.h>
 #include "DAP_config.h"
 #include "DAP.h"
@@ -391,13 +392,22 @@ uint32_t DAP_GetCommandLength(const uint8_t *request, uint32_t request_len)
  * pyocd   sends  0/254, 0/4, 0/255
  * openocd sends  0/240, 0/4, 0/3
  *
- * Actual idea is, to switch to a faster mode if openocd is detected reliably.
+ * Actual idea is, to switch to a faster mode if the tool is detected reliably.
  *
  * If any parameter is "0", the logic is reset.
  *
  * \note
- *    Sequence is different for pyocd, if CMSIS > 5.7.0 is used in the probe.
+ *    - fingerprinting must not contain \a DAP_ID_PACKET_COUNT or \a DAP_ID_PACKET_SIZE in \a sample_no < 3
+ *    - sequence is different for pyocd, if CMSIS > 5.7.0 is used in the probe.
+ *
+ * TODO
+ *    One can foul this algorithm by doing "pyocd list" with a successive openocd which makes the probe
+ *    believe that it is still pyocd.  Must introduce some kind of timeout
  */
+
+// simple but correct version concerning DAP_ID_PACKET_COUNT / DAP_ID_PACKET_SIZE
+#define DO_IT_SIMPLE
+
 daptool_t DAP_FingerprintTool(const uint8_t *request, uint32_t request_len)
 {
     static uint32_t sample_no;
@@ -406,23 +416,63 @@ daptool_t DAP_FingerprintTool(const uint8_t *request, uint32_t request_len)
     if (request == NULL  ||  request_len == 0) {
         sample_no = 0;
         probed_tool = E_DAPTOOL_UNKNOWN;
+        return probed_tool;
     }
-    else if (request_len >= 2  &&  sample_no < 3) {
+    if (request[0] != ID_DAP_Info) {
+//        picoprobe_info("fingerprintxx: %d %02x %02x %d\n", sample_no, request[0], request[1], probed_tool);
+        sample_no = 0;
+        probed_tool = E_DAPTOOL_UNKNOWN;
+        return probed_tool;
+    }
+
+#ifdef DO_IT_SIMPLE
+    if (request_len >= 2  &&  sample_no == 0) {
+        ++sample_no;
+
+        if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_COUNT) {        // TODO hmmm... this does not work
+            probed_tool = E_DAPTOOL_PYOCD;
+        }
+        else if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_CAPABILITIES) {
+            probed_tool = E_DAPTOOL_OPENOCD;
+        }
+        else if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_SIZE) {    // TODO hmmm... this does not work
+            probed_tool = E_DAPTOOL_PROBERS;
+        }
+    }
+    else {
+        sample_no = 0;
+        probed_tool = E_DAPTOOL_UNKNOWN;
+    }
+
+    #if 1
+        picoprobe_info("fingerprint: %d %02x %02x %d\n", sample_no, request[0], request[1], probed_tool);
+    #endif
+
+    return (sample_no == 0) ? E_DAPTOOL_UNKNOWN : probed_tool;    // return probe result if fingerprint is complete
+#else
+    static uint32_t last_request_us;
+
+    if (time_us_32() - last_request_us >= 50000) {
+        sample_no = 0;
+        probed_tool = E_DAPTOOL_UNKNOWN;
+    }
+
+    if (request_len >= 2  &&  sample_no < 3) {
         ++sample_no;
 
         if (sample_no == 1) {
-            if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_COUNT) {
+            if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_COUNT) {        // TODO hmmm... this does not work
                 probed_tool = E_DAPTOOL_PYOCD;
             }
             else if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_CAPABILITIES) {
                 probed_tool = E_DAPTOOL_OPENOCD;
             }
-            else if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_SIZE) {
+            else if (request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_SIZE) {    // TODO hmmm... this does not work
                 probed_tool = E_DAPTOOL_PROBERS;
             }
         }
         else if (sample_no == 2) {
-            if (probed_tool == E_DAPTOOL_PROBERS  &&  request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_COUNT)
+            if (probed_tool == E_DAPTOOL_PROBERS  &&  request[0] == ID_DAP_Info  &&  request[1] == DAP_ID_PACKET_COUNT)    // TODO hmmm... this does not work
             {
                 // still E_DAPTOOL_PROBERS
             }
@@ -454,14 +504,21 @@ daptool_t DAP_FingerprintTool(const uint8_t *request, uint32_t request_len)
             }
         }
     }
-
-#if 0
-    if (request != NULL) {
-        printf("fingerprint: %d %02x %02x %d\n", sample_no, request[0], request[1], probed_tool);
+    else {
+        sample_no = 0;
+        probed_tool = E_DAPTOOL_UNKNOWN;
     }
-#endif
+
+    #if 1
+        if (request != NULL) {
+            picoprobe_info("fingerprint: %d %02x %02x %d\n", sample_no, request[0], request[1], probed_tool);
+        }
+    #endif
+
+    last_request_us = time_us_32();
 
     return (sample_no < 3) ? E_DAPTOOL_UNKNOWN : probed_tool;    // return probe result if fingerprint is complete
+#endif
 }   // DAP_FingerprintTool
 
 
