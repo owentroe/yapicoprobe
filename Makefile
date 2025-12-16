@@ -224,7 +224,8 @@ debuggEE-flash-openocd:
 	# openocd does much faster flashing
 	$(OPENOCD) -s $(OPENOCD_S) -f interface/cmsis-dap.cfg -f target/rp2350.cfg                                        \
 	           -c "adapter speed 6000; adapter serial $(DEBUGGER_SERNO)"                                              \
-	           -c "program {$(BUILDEE_DIR)/$(PROJECT).hex}  verify reset; exit;"
+	           -c "program {$(BUILDEE_DIR)/$(PROJECT).hex}  verify; exit;"
+	# "pyocd reset" required to start
 	pyocd reset -f 6M --probe $(DEBUGGER_SERNO)
 	@echo "ok."
 
@@ -232,7 +233,12 @@ debuggEE-flash-openocd:
 debuggEE-flash-probe-rs:
 	$(MAKE) all-debuggEE
 	#probe-rs run      --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO) --rtt-scan-memory $(BUILDEE_DIR)/$(PROJECT).elf
-	probe-rs download --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO)                   $(BUILDEE_DIR)/$(PROJECT).elf
+	probe-rs download --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO) --verify                 $(BUILDEE_DIR)/$(PROJECT).elf
+	# "sleep" required, otherwise the "probe-rs reset" fails ("pyocd reset" would work)
+	#sleep 0.5
+	# "probe-rs reset" required to start
+	#pyocd reset -f 6M --probe $(DEBUGGER_SERNO)
+	probe-rs reset    --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO)
 	@echo "ok."
 
 
