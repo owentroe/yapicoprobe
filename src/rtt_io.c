@@ -164,66 +164,68 @@ static bool is_target_ok(uint32_t addr)
 
 
 
-static uint32_t search_for_rtt_cb(uint32_t prev_rtt_cb)
+static bool search_for_rtt_cb(uint32_t *p_rtt_cb)
 /**
  * Search for the RTT control block.
  *
- * \param prev_rtt_cb  where the search begins or zero for new scan
- * \return 0 -> nothing found, otherwise beginning of control block
+ * \param p_rtt_cb  where the search begins or zero for new scan, on exit it holds the last
+ *                  RAM block scanned for RTT_CB
+ * \return true -> \a p_rtt_cb holds a valid control block
  *
  * \note
- *    - a small block at the end of RAM is not searched
- *    - searching all 256KByte RAM of the RP2040 takes 600ms (at 12.5MHz interface clock)
+ *    Searching all 256KByte RAM of the RP2040 takes 600ms (at 12.5MHz interface clock)
  */
 {
-    uint8_t buf[1024];
-    bool ok;
-    uint32_t rtt_cb = 0;
+    uint8_t buf[1024 + sizeof(EXT_SEGGER_RTT_CB_HEADER)];
+    bool res = false;
+    uint32_t rtt_cb = *p_rtt_cb;
+
+//    picoprobe_info("-----------search_for_rtt_cb(%08x)\n", (unsigned int)rtt_cb);
+
+    // check parameter
+    if (rtt_cb < TARGET_RAM_START  ||  rtt_cb >= TARGET_RAM_END - sizeof(EXT_SEGGER_RTT_CB_HEADER)) {
+        rtt_cb = TARGET_RAM_START;
+    }
+    else if (rtt_check_control_block_header(rtt_cb)) {
+        // -> valid control block!
+        return true;
+    }
 
     if (dap_is_connected()) {
         xTimerReset(timer_rtt_dap_interleave, 100);
     }
 
-    // check parameter
-    if ((prev_rtt_cb != 0  &&  prev_rtt_cb < TARGET_RAM_START)  ||  prev_rtt_cb > TARGET_RAM_END - sizeof(EXT_SEGGER_RTT_CB_HEADER)) {
-        prev_rtt_cb = 0;
-    }
+    // note that searches must somehow overlap to find (unaligned) control blocks at the border of read chunks
+    for (uint32_t addr = rtt_cb;  addr < TARGET_RAM_END - sizeof(seggerRTT);  addr += sizeof(buf) - sizeof(EXT_SEGGER_RTT_CB_HEADER)) {
+        uint32_t size = MIN(sizeof(buf), TARGET_RAM_END - addr);
+        if ( !swd_read_memory(addr, buf, size)) {
+            *p_rtt_cb = 0;
+            break;
+        }
 
-    // fast search, saves a little SW traffic and a few ms
-    ok = rtt_check_control_block_header(prev_rtt_cb);
-    if (ok) {
-        rtt_cb = prev_rtt_cb;
-    }
+        rtt_cb = check_buffer_for_rtt_cb(buf, size, addr);
+        if (rtt_cb != 0) {
+            *p_rtt_cb = rtt_cb;
+            res = true;
+            break;
+        }
 
-    if (rtt_cb == 0) {
-        // note that searches must somehow overlap to find (unaligned) control blocks at the border of read chunks
-        uint32_t start_search = (prev_rtt_cb < TARGET_RAM_START) ? TARGET_RAM_START : prev_rtt_cb + segger_alignment;
-        for (uint32_t addr = start_search;  addr <= TARGET_RAM_END - sizeof(buf);  addr += sizeof(buf) - sizeof(seggerRTT)) {
-            ok = swd_read_memory(addr, buf, sizeof(buf));
+        *p_rtt_cb = addr + (sizeof(buf) - sizeof(EXT_SEGGER_RTT_CB_HEADER));
 
-            if ( !ok) {
+        if (dap_is_connected()) {
+            if (sw_unlock_requested()  &&  !xTimerIsTimerActive(timer_rtt_dap_interleave)) {
                 break;
             }
-            else if (dap_is_connected()) {
-                if (sw_unlock_requested()  &&  !xTimerIsTimerActive(timer_rtt_dap_interleave)) {
-                    break;
-                }
-            }
-            else if (sw_unlock_requested()) {
-                break;
-            }
-
-            rtt_cb = check_buffer_for_rtt_cb(buf, sizeof(buf), addr);
-            if (rtt_cb != 0) {
-                break;
-            }
+        }
+        else if (sw_unlock_requested()) {
+            break;
         }
     }
 
     if (dap_is_connected()) {
         xTimerStop(timer_rtt_dap_interleave, 100);
     }
-    return rtt_cb;
+    return res;
 }   // search_for_rtt_cb
 
 
@@ -696,17 +698,24 @@ void rtt_io_thread(void *ptr)
  * PyOCD:
  * - stops DAP communication after single steps
  * - during this pause, the probe jumps in and polls RTT communication
+ * - on execution OyOCD poll the target, but there are big enough gaps for RTT
  * OpenOCD:
  * - even after single steps, OpenOCD continues to poll the target via DAP
  * - during (small) gaps in the communication the probe tries to do RTT access to the target.
  *   IT SEEMS THAT READING THE TARGET RESULTS IN NONSENSE, which means that e.g. rtt_check_control_block_header()
  *   returns !ok.  But sometimes (esp pressing pause during run or longer "step over") access seems to work.
  *   But this is not reliable.
- * - nevertheless it seems that debugging is not disturbed
+ * - debugging seems to be disturbed because after a while a hardfault is thrown on the target
  * - TODO can OpenOCD behavior be changed via commands to omit polling?
+ * --> no RTT while DAP
+ * probe-rs:
+ * - is very slow on DAP gdb debugging and gets slower if RTT while DAP is enabled
+ * - anyway debugging with probe-rs (0.29.1) is no fun
+ * --> no RTT while DAP
  */
 {
     static uint32_t rtt_cb = 0;
+    static bool rtt_cb_ok = false;
     bool target_online = false;
 
     for (;;) {
@@ -728,18 +737,21 @@ void rtt_io_thread(void *ptr)
             // Do RTT while debugging until a DAP command arrives
             // Note that dap_is_connected() must be caught here, because the code downwards disturbs debugging
             //
-            uint32_t prev_rtt_cb = rtt_cb;
-
             do {
-                rtt_cb = search_for_rtt_cb(rtt_cb);
+                uint32_t prev_rtt_cb;
 
-                if (rtt_cb == 0  &&  prev_rtt_cb != 0) {
-                    picoprobe_info("---- RTT_CB lost (RTT during debug)\n");
+                prev_rtt_cb = rtt_cb;
+                if ( !search_for_rtt_cb( &rtt_cb)) {
+                    if (rtt_cb_ok) {
+                        rtt_cb_ok = false;
+                        picoprobe_info("---- no RTT_CB found (RTT during DAP)\n");
+                    }
+                    break;
                 }
-                else if (rtt_cb != 0  &&  rtt_cb != prev_rtt_cb) {
-                    // RTT_CB found
-                    picoprobe_info("---- RTT_CB found at 0x%x (RTT during debug)\n", (unsigned)rtt_cb);
-                    prev_rtt_cb = rtt_cb;
+
+                if (rtt_cb != prev_rtt_cb) {
+                    rtt_cb_ok = true;
+                    picoprobe_info("---- RTT_CB found at 0x%x (RTT during DAP)\n", (unsigned)rtt_cb);
                 }
 
                 do_rtt_io(rtt_cb);
@@ -770,23 +782,31 @@ void rtt_io_thread(void *ptr)
             //
             // search for RTT_CB
             //
+            uint32_t prev_rtt_cb;
+
             picoprobe_info("searching RTT_CB in 0x%08x..0x%08x, prev: 0x%08x\n",
                            (unsigned)TARGET_RAM_START, (unsigned)(TARGET_RAM_END - 1), (unsigned)rtt_cb);
             led_state(LS_TARGET_FOUND);
             target_online = true;
 
-            rtt_cb = search_for_rtt_cb(rtt_cb);               // either verify previous RTT_CB or search for one
-            if (rtt_cb == 0)
+            prev_rtt_cb = rtt_cb;
+            if ( !search_for_rtt_cb( &rtt_cb))
             {
                 // -> no RTT_CB in memory
-                picoprobe_info("---- no RTT_CB found\n");
+                if (rtt_cb_ok) {
+                    rtt_cb_ok = false;
+                    picoprobe_info("---- no RTT_CB found\n");
+                }
                 led_state(LS_TARGET_FOUND);
                 vTaskDelay(pdMS_TO_TICKS(900));
             }
             else
             {
                 // RTT_CB found
-                picoprobe_info("---- RTT_CB found at 0x%x\n", (unsigned)rtt_cb);
+                if (rtt_cb != prev_rtt_cb) {
+                    rtt_cb_ok = true;
+                    picoprobe_info("---- RTT_CB found at 0x%x\n", (unsigned)rtt_cb);
+                }
                 led_state(LS_RTT_CB_FOUND);
                 do_rtt_io(rtt_cb);
             }
@@ -872,8 +892,7 @@ void rtt_console_init(uint32_t task_prio)
     }
 #endif
 
-    // TODO rtt_io needs 20ms to pull console while DAP is active (this is actually too long and during debugging it could be set to 5ms!?)
-    timer_rtt_dap_interleave = xTimerCreate("RTT/DAP interleave timeout", pdMS_TO_TICKS(20), pdFALSE, NULL, rtt_cb_verify_timeout);
+    timer_rtt_dap_interleave = xTimerCreate("RTT/DAP interleave timeout", pdMS_TO_TICKS(8), pdFALSE, NULL, rtt_cb_verify_timeout);
 
     xTaskCreate(rtt_io_thread, "RTT-IO", configMINIMAL_STACK_SIZE, NULL, task_prio, &task_rtt_console);
     if (task_rtt_console == NULL)
