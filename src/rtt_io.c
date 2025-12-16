@@ -481,7 +481,7 @@ static void do_rtt_io(uint32_t rtt_cb)
     bool working_sysview = false;
 #endif
     bool ok;
-    bool dap_connected_first_round = true;
+    bool probe_rtt_cb;
 
     static_assert(sizeof(uint32_t) == sizeof(unsigned int), "uint32_t/unsigned int mix up");    // why doesn't segger use uint32_t?
 
@@ -490,13 +490,43 @@ static void do_rtt_io(uint32_t rtt_cb)
     }
 
     // do operations
+    xTimerReset(timer_rtt_dap_interleave, 100);
     rtt_console_running = true;
+    probe_rtt_cb = true;
     ok = true;
     while (ok) { //  &&  !sw_unlock_requested()) {
-        bool probe_rtt_cb;
+        if (ok  &&  probe_rtt_cb) {
+            //
+            // check RTT control block and also all RTT channels
+            //
+//            printf("%8x %d %d %d %d %d\n", (unsigned int)rtt_cb, ok, probe_rtt_cb, working_uart, ok_console_from_target, ok_console_to_target);
+            // did nothing -> check if RTT channels (dis)appeared
+            ok = ok  &&  rtt_check_control_block_header(rtt_cb);
+//            printf("xx %d\n", ok);
+#if OPT_TARGET_UART
+            if ( !ok_console_from_target)
+                ok = ok  &&  rtt_check_channel_from_target(rtt_cb, RTT_CHANNEL_CONSOLE, &aUpConsole, &ok_console_from_target);
+            if ( !ok_console_to_target)
+                ok = ok  &&  rtt_check_channel_to_target(rtt_cb, RTT_CHANNEL_CONSOLE, &aDownConsole, &ok_console_to_target);
+#endif
+#if INCLUDE_SYSVIEW
+            if ( !ok_sysview_from_target)
+                ok = ok  &&  rtt_check_channel_from_target(rtt_cb, RTT_CHANNEL_SYSVIEW, &aUpSysView, &ok_sysview_from_target);
+            if ( !ok_sysview_to_target)
+                ok = ok  &&  rtt_check_channel_to_target(rtt_cb, RTT_CHANNEL_SYSVIEW, &aDownSysView, &ok_sysview_to_target);
+#endif
+
+            if ( !dap_is_connected()) {
+                // -> delay (TODO what is it good for?)
+                xEventGroupWaitBits(events, EV_RTT_TO_TARGET, pdTRUE, pdFALSE, pdMS_TO_TICKS(RTT_POLL_INT_MS));
+            }
+        }
 
         probe_rtt_cb = true;
 
+        //
+        // RTT console IO
+        //
 #if OPT_TARGET_UART
         {
 #if INCLUDE_SYSVIEW
@@ -528,6 +558,9 @@ static void do_rtt_io(uint32_t rtt_cb)
 #endif
 
 #if INCLUDE_SYSVIEW
+        //
+        // RTT SysView IO
+        //
         if (net_sysview_is_connected()) {
             if ( !net_sysview_was_connected) {
                 net_sysview_was_connected = true;
@@ -549,36 +582,8 @@ static void do_rtt_io(uint32_t rtt_cb)
         }
 #endif
 
-        if (ok  &&  probe_rtt_cb) {
-//            printf("%8x %d %d %d %d %d\n", (unsigned int)rtt_cb, ok, probe_rtt_cb, working_uart, ok_console_from_target, ok_console_to_target);
-            // did nothing -> check if RTT channels (dis)appeared
-            ok = ok  &&  rtt_check_control_block_header(rtt_cb);
-//            printf("xx %d\n", ok);
-#if OPT_TARGET_UART
-            if ( !ok_console_from_target)
-                ok = ok  &&  rtt_check_channel_from_target(rtt_cb, RTT_CHANNEL_CONSOLE, &aUpConsole, &ok_console_from_target);
-            if ( !ok_console_to_target)
-                ok = ok  &&  rtt_check_channel_to_target(rtt_cb, RTT_CHANNEL_CONSOLE, &aDownConsole, &ok_console_to_target);
-#endif
-#if INCLUDE_SYSVIEW
-            if ( !ok_sysview_from_target)
-                ok = ok  &&  rtt_check_channel_from_target(rtt_cb, RTT_CHANNEL_SYSVIEW, &aUpSysView, &ok_sysview_from_target);
-            if ( !ok_sysview_to_target)
-                ok = ok  &&  rtt_check_channel_to_target(rtt_cb, RTT_CHANNEL_SYSVIEW, &aDownSysView, &ok_sysview_to_target);
-#endif
-
-            if ( !dap_is_connected()) {
-                // -> delay (TODO what is it good for?)
-                xEventGroupWaitBits(events, EV_RTT_TO_TARGET, pdTRUE, pdFALSE, pdMS_TO_TICKS(RTT_POLL_INT_MS));
-            }
-        }
-
         if (dap_is_connected()) {
-            if (dap_connected_first_round) {
-                dap_connected_first_round = false;
-                xTimerReset(timer_rtt_dap_interleave, 100);
-            }
-            else if (sw_unlock_requested()  &&  !xTimerIsTimerActive(timer_rtt_dap_interleave)) {
+            if (sw_unlock_requested()  &&  !xTimerIsTimerActive(timer_rtt_dap_interleave)) {
 //                picoprobe_info("xx DAP timeout %d %d\n", sw_unlock_requested(), !xTimerIsTimerActive(timer_rtt_dap_interleave));
                 ok = false;
             }
