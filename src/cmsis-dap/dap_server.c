@@ -304,6 +304,7 @@ void dap_task(void *ptr)
                                         (tool == E_DAPTOOL_PYOCD) ? "pyOCD"       :
                                                 (tool == E_DAPTOOL_PROBERS) ? "probe-rs" :
                                                         (tool == E_DAPTOOL_USER) ? "user-set"   : "UNKNOWN", dap_packet_count, dap_packet_size);
+                        picoprobe_debug("------------ %d (command leading to online)\n", RxDataBuffer[0]);
                         led_state(LS_DAPV2_CONNECTED);
                     }
                     else {
@@ -312,6 +313,7 @@ void dap_task(void *ptr)
                 }
                 else {
                     // ID_DAP_Info must/can be done without a lock
+                    picoprobe_debug("-----------__ %d (execute offline)\n", RxDataBuffer[0]);
                 }
             }
             else {
@@ -322,16 +324,10 @@ void dap_task(void *ptr)
                     led_state(LS_DAPV2_DISCONNECTED);
                     sw_unlock(E_SWLOCK_DAPV2);
 
-#if 1
                     // probe-rs does not like this (because it does reconnects with other fingerprints)
                     dap_packet_count = _DAP_PACKET_COUNT_UNKNOWN;
                     dap_packet_size  = _DAP_PACKET_SIZE_UNKNOWN;
                     tool = DAP_FingerprintTool(NULL, 0);
-#endif
-                }
-                else if (RxDataBuffer[0] == ID_DAP_Info  ||  RxDataBuffer[0] == ID_DAP_HostStatus) {
-                    // ignore these commands after an ID_DAP_Disconnect
-                    // e.g. openocd issues ID_DAP_HostStatus after ID_DAP_Disconnect
                 }
             }
 
@@ -378,7 +374,7 @@ void dap_task(void *ptr)
                     // there is a bug in CMSIS-DAP, see https://github.com/ARM-software/CMSIS_5/pull/1503
                     // but we trust our own length calculation
                     picoprobe_error("   !!!!!!!! request (%u) and executed length (%u) differ\n",
-                            (unsigned)request_len, (unsigned)(resp_len >> 16));
+                                    (unsigned)request_len, (unsigned)(resp_len >> 16));
                 }
             }
 

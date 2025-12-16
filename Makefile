@@ -234,17 +234,13 @@ debuggEE-flash-probe-rs:
 	$(MAKE) all-debuggEE
 	#probe-rs run      --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO) --rtt-scan-memory $(BUILDEE_DIR)/$(PROJECT).elf
 	probe-rs download --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO) --verify                 $(BUILDEE_DIR)/$(PROJECT).elf
-	# "sleep" required, otherwise the "probe-rs reset" fails ("pyocd reset" would work)
-	#sleep 0.5
-	# "probe-rs reset" required to start
-	#pyocd reset -f 6M --probe $(DEBUGGER_SERNO)
 	probe-rs reset    --speed 6000 --probe 2e8a:000c:$(DEBUGGER_SERNO)
 	@echo "ok."
 
 
 .PHONY: debuggEE-reset
 debuggEE-reset:
-	pyocd reset -v -f 1M --probe $(DEBUGGER_SERNO)
+	pyocd reset -v -f 6M --probe $(DEBUGGER_SERNO)
 
 .PHONY: debuggEE-reset-openocd
 debuggEE-reset-openocd:

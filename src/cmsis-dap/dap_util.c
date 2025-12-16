@@ -444,9 +444,7 @@ daptool_t DAP_FingerprintTool(const uint8_t *request, uint32_t request_len)
         probed_tool = E_DAPTOOL_UNKNOWN;
     }
 
-    #if 1
-        picoprobe_info("fingerprint: %d %02x %02x %d\n", sample_no, request[0], request[1], probed_tool);
-    #endif
+    picoprobe_debug("DAP_FingerprintTool: %d %02x %02x %d\n", (int)sample_no, request[0], request[1], probed_tool);
 
     return (sample_no == 0) ? E_DAPTOOL_UNKNOWN : probed_tool;    // return probe result if fingerprint is complete
 #else
@@ -525,9 +523,9 @@ daptool_t DAP_FingerprintTool(const uint8_t *request, uint32_t request_len)
 
 bool DAP_OfflineCommand(const uint8_t *request_data)
 {
-    return      *request_data == ID_DAP_Info
-            ||  *request_data == ID_DAP_HostStatus
-            ||  *request_data == ID_DAP_Connect
-            ||  *request_data == ID_DAP_Disconnect
+    return      *request_data == ID_DAP_Info                // must be offline, "pyocd list" uses this
+            ||  *request_data == ID_DAP_HostStatus          // must be offline, openocd/probe-rs uses this after disconnect
+//            ||  *request_data == ID_DAP_Connect           // not funny: with ID_DAP_Connect as offline cmd, probe-rs does not work reliably, not really clear why
+            ||  *request_data == ID_DAP_Disconnect          // this must be offline
             ||  *request_data == ID_DAP_SWJ_Clock;          // this is not true, but unfortunately pyOCD does it
 }   // DAP_OfflineCommand
