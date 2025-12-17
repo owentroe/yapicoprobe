@@ -572,7 +572,7 @@ bool dap_is_connected(void)
 #if OPT_CMSIS_DAPV1
     r = r || hid_swd_connected;
 #endif
-#if OPT_CMSIS_DAPV1
+#if OPT_CMSIS_DAPV2
     r = r || swd_connected;
 #endif
 
