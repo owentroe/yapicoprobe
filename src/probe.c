@@ -357,6 +357,7 @@ void probe_init()
 
     if ( !probe.initted) {
 //        picoprobe_info("     2. probe_init()\n");
+
         uint offset = pio_add_program(PROBE_PIO, &probe_program);
         probe.offset = offset;
 
@@ -397,10 +398,21 @@ void probe_init()
 
 
 void probe_deinit(void)
+/**
+ * Stop the probe.
+ *
+ * \attention
+ *    This code should actually not be executed, because it might happen that ID_DAP_Disconnect is called while
+ *    not connected and then RTT functionality stumbles.
+ */
 {
+//    picoprobe_info("probe_deinit()\n");
+
+#if 0
     if (probe.initted) {
         pio_sm_set_enabled(PROBE_PIO, PROBE_PIO_SM, 0);
         pio_remove_program(PROBE_PIO, &probe_program, probe.offset);
         probe.initted = false;
     }
+#endif
 }   // prebe_deinit
