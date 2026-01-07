@@ -144,28 +144,27 @@ flash: all
 #
 .PHONY: create-images
 create-images:
-	# with SDK2 clang no longer works.  This is a TODO
+	# Using GCC instead of clang (SDK2 compatibility)
 	mkdir -p images
 	#
-	$(MAKE) cmake-create-release-clang PICO_BOARD=pico
+	$(MAKE) cmake-create-release PICO_BOARD=pico
 	$(MAKE) all
 	cp $(BUILD_DIR)/$(PROJECT).uf2 images/yapicoprobe-$(shell printf "%02d%02d" $(VERSION_MAJOR) $(VERSION_MINOR))-pico-$(GIT_HASH).uf2
 	#
-	# does not compile with clang because of missing __heap_start/end
-	$(MAKE) cmake-create-release-clang PICO_BOARD=pico_w
+	$(MAKE) cmake-create-release PICO_BOARD=pico_w
 	$(MAKE) all
 	cp $(BUILD_DIR)/$(PROJECT).uf2 images/yapicoprobe-$(shell printf "%02d%02d" $(VERSION_MAJOR) $(VERSION_MINOR))-picow-$(GIT_HASH).uf2
 	#
-	$(MAKE) cmake-create-release-clang PICO_BOARD=pico_debug_probe
+	$(MAKE) cmake-create-release PICO_BOARD=pico_debug_probe
 	$(MAKE) all
 	cp $(BUILD_DIR)/$(PROJECT).uf2 images/yapicoprobe-$(shell printf "%02d%02d" $(VERSION_MAJOR) $(VERSION_MINOR))-picodebugprobe-$(GIT_HASH).uf2
 	#
-	$(MAKE) cmake-create-release-clang PICO_BOARD=pico2
+	$(MAKE) cmake-create-release PICO_BOARD=pico2
 	$(MAKE) all
 	cp $(BUILD_DIR)/$(PROJECT).uf2 images/yapicoprobe-$(shell printf "%02d%02d" $(VERSION_MAJOR) $(VERSION_MINOR))-pico2-$(GIT_HASH).uf2
 	#
 	# put development environment in a clean state
-	$(MAKE) cmake-create-debug-clang
+	$(MAKE) cmake-create-debug
 
 
 .PHONY: check-clang
