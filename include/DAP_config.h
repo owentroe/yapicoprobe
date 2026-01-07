@@ -226,9 +226,10 @@ __STATIC_INLINE uint8_t DAP_GetTargetBoardNameString (char *str)
 */
 __STATIC_INLINE uint8_t DAP_GetProductFirmwareVersionString (char *str)
 {
-    (void)str;
-    return 0;
+    strcpy(str, "2.2.0");
+    return 6;  // Length of "2.2.0" + null terminator
 }
+
 
 ///@}
 
